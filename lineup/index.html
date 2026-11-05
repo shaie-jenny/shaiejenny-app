@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<title>Line-up</title>
+<style>
+  :root {
+    --text: #fff;
+    --muted: rgba(255,255,255,0.72);
+    --card: rgba(255,255,255,0.12);
+    --card-line: rgba(255,255,255,0.16);
+    --tick: #7BD88F;
+    --bg: #1a1020;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; background: var(--bg); color: var(--text);
+    font: 17px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    -webkit-font-smoothing: antialiased; }
+  a { color: inherit; }
+  .backdrop { position: fixed; inset: 0; z-index: -2; background: var(--wash, var(--bg)); background-size: cover; background-position: center;
+    filter: blur(50px) brightness(0.55); transform: scale(1.2); }
+  .hero { position: relative; height: min(62vh, 520px); background: var(--wash, var(--bg)); background-size: cover; background-position: center;
+    -webkit-mask-image: linear-gradient(#000 55%, transparent); mask-image: linear-gradient(#000 55%, transparent); }
+  main { max-width: 640px; margin: 0 auto; padding: 0 16px 56px; }
+  .titles { text-align: center; margin-top: -150px; position: relative; padding: 0 8px; }
+  h1 { font-family: "New York", Georgia, "Times New Roman", serif; font-weight: 700; font-size: clamp(34px, 9vw, 52px);
+    line-height: 1.05; margin: 0 0 10px; text-shadow: 0 2px 14px rgba(0,0,0,0.35); }
+  .when { font-weight: 600; font-size: 18px; }
+  .where { color: var(--muted); margin-top: 2px; }
+  .actions { display: flex; gap: 10px; margin: 22px 0 6px; }
+  .pill { flex: 1; display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 48px; border-radius: 999px;
+    text-decoration: none; font-weight: 600; font-size: 15px; background: var(--card); border: 1px solid var(--card-line);
+    -webkit-backdrop-filter: blur(20px); backdrop-filter: blur(20px); cursor: pointer; color: var(--text); }
+  .pill.primary { background: #fff; color: #111; border-color: #fff; }
+  .card { background: var(--card); border: 1px solid var(--card-line); border-radius: 22px; padding: 16px; margin-top: 14px;
+    -webkit-backdrop-filter: blur(24px); backdrop-filter: blur(24px); overflow: hidden; }
+  .card h2 { font-size: 17px; margin: 0 0 10px; }
+  .weather { display: flex; gap: 14px; align-items: center; }
+  .weather .icon { font-size: 38px; width: 48px; text-align: center; }
+  .weather .main { font-weight: 600; }
+  .small { font-size: 13px; color: var(--muted); }
+  .map { margin: -16px -16px 12px; height: 170px; }
+  .map iframe { width: 100%; height: 100%; border: 0; filter: saturate(0.9); }
+  .row { display: flex; gap: 12px; align-items: baseline; padding: 4px 0; }
+  .row .label { width: 96px; flex: none; color: var(--muted); font-size: 15px; }
+  .tick { color: var(--tick); font-size: 13px; margin-left: 4px; }
+  ol { margin: 0; padding: 0; list-style: none; counter-reset: s; }
+  ol li { counter-increment: s; display: flex; gap: 12px; padding: 5px 0; }
+  ol li::before { content: counter(s); width: 18px; text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; }
+  .artist { display: block; font-size: 13px; color: var(--muted); }
+  .buttons { display: flex; flex-wrap: wrap; gap: 10px; }
+  .buttons .pill { flex: 1 1 140px; }
+  .dot { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+  .status { text-align: center; padding: 30vh 24px; color: var(--muted); }
+  footer { text-align: center; margin-top: 28px; font-size: 12px; color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="backdrop" id="backdrop"></div>
+<div id="app"><p class="status">Loading the line-up…</p></div>
+
+<script>
+// Repertoire line-up page. The link's #fragment is the line-up's ID; the
+// details live in Repertoire's public iCloud database (read-only here).
+const CONTAINER = "iCloud.com.shaiejenny.repertoire";
+// Read-only keys for the public database, one per iCloud environment.
+// TestFlight and App Store builds use production; test builds use development.
+const API_TOKENS = {
+  production: "PASTE_PRODUCTION_TOKEN_HERE",
+  development: "d5fbe48a8d0669745d7c1d94a5f0de751d1df3c9589d71daa28c780d435a1357"
+};
+
+const app = document.getElementById("app");
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const safeURL = u => /^https:\/\//i.test(u || "") ? u : null;
+
+function showStatus(text) { app.innerHTML = `<p class="status">${esc(text)}</p>`; }
+
+async function lookup(id) {
+  for (const [env, token] of Object.entries(API_TOKENS)) {
+    if (!/^[0-9a-f]{64}$/.test(token)) continue;
+    try {
+      const res = await fetch(`https://api.apple-cloudkit.com/database/1/${CONTAINER}/${env}/public/records/lookup?ckAPIToken=${encodeURIComponent(token)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ records: [{ recordName: "lineup-" + id }] })
+      });
+      if (!res.ok) continue;
+      const record = (await res.json()).records?.[0];
+      if (record && record.fields?.payload) return record;
+    } catch (e) { /* try the next environment */ }
+  }
+  return null;
+}
+
+// The 3×3 colour wash from the app, as layered gradients.
+function wash(colors) {
+  if (!colors || colors.length < 9) return "";
+  const at = [[0,0],[50,0],[100,0],[0,50],[45,55],[100,50],[0,100],[50,100],[100,100]];
+  const layers = colors.map((c, i) => `radial-gradient(circle at ${at[i][0]}% ${at[i][1]}%, ${c} 0%, transparent 62%)`);
+  return layers.join(", ") + `, ${colors[4]}`;
+}
+
+const WEATHER_ICONS = [
+  ["thunder", "⛈️"], ["snow", "❄️"], ["sleet", "🌨️"], ["hail", "🌨️"], ["heavyrain", "🌧️"], ["rain", "🌧️"], ["drizzle", "🌦️"],
+  ["fog", "🌫️"], ["haze", "🌫️"], ["wind", "💨"], ["moon", "🌙"], ["sun.max", "☀️"], ["cloud.sun", "⛅️"], ["cloud", "☁️"], ["sun", "🌤️"]
+];
+const weatherIcon = symbol => (WEATHER_ICONS.find(([key]) => (symbol || "").replace(/\./g, ".").includes(key)) || [, "🌡️"])[1];
+
+function formatWhen(iso, tz, long = true) {
+  const d = new Date(iso);
+  const opts = long ? { weekday: "long", day: "numeric", month: "long" } : { weekday: "short", day: "numeric", month: "short" };
+  const day = d.toLocaleDateString("en-GB", { ...opts, timeZone: tz });
+  const time = d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: tz });
+  return `${day} · ${time}`;
+}
+
+function icsLink(p) {
+  const start = new Date(p.date);
+  const end = new Date(start.getTime() + 2 * 3600 * 1000);
+  const stamp = d => d.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
+  const text = s => String(s || "").replace(/[,;\\]/g, m => "\\" + m).replace(/\n/g, "\\n");
+  const ics = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Repertoire//Line-up//EN", "BEGIN:VEVENT",
+    `UID:${location.hash.slice(1)}@repertoire`, `DTSTAMP:${stamp(new Date())}`, `DTSTART:${stamp(start)}`, `DTEND:${stamp(end)}`,
+    `SUMMARY:${text(p.name)}`, `LOCATION:${text([p.place, p.address].filter(Boolean).join(", "))}`,
+    "END:VEVENT", "END:VCALENDAR"].join("\r\n");
+  return "data:text/calendar;charset=utf-8," + encodeURIComponent(ics);
+}
+
+function render(p, photoURL) {
+  document.title = p.name;
+  const bg = photoURL ? `url("${photoURL}")` : wash(p.gradient);
+  document.documentElement.style.setProperty("--wash", bg);
+
+  const lat = p.latitude, lon = p.longitude, hasMap = typeof lat === "number" && typeof lon === "number";
+  const apple = safeURL(p.mapsURL);
+  const google = hasMap ? `https://www.google.com/maps/dir/?api=1&destination=${lat},${lon}` : null;
+  const osm = hasMap ? `https://www.openstreetmap.org/export/embed.html?bbox=${lon - 0.006},${lat - 0.004},${lon + 0.006},${lat + 0.004}&layer=mapnik&marker=${lat},${lon}` : null;
+
+  const weather = p.weather ? `
+    <section class="card">
+      <div class="weather">
+        <div class="icon">${weatherIcon(p.weather.symbol)}</div>
+        <div>
+          <div class="main">${esc(p.weather.condition)}${p.weather.temperature ? ", " + esc(p.weather.temperature) : ""}</div>
+          <div class="small">High ${esc(p.weather.high)} · Low ${esc(p.weather.low)} · ${esc(p.weather.rainChance)}% chance of rain</div>
+        </div>
+      </div>
+      <div class="small" style="margin-top:8px"> Weather forecast${p.weatherAsOf ? " as of " + esc(formatWhen(p.weatherAsOf, p.timeZone, false)) : ""}</div>
+    </section>` : "";
+
+  const where = (p.place || hasMap) ? `
+    <section class="card">
+      ${osm ? `<div class="map"><iframe src="${osm}" loading="lazy" title="Map"></iframe></div>` : ""}
+      <h2 style="margin-bottom:2px">${esc(p.place)}</h2>
+      ${p.address && p.address !== p.place ? `<div class="small">${esc(p.address)}</div>` : ""}
+      ${(apple || google) ? `<div class="buttons" style="margin-top:12px">
+        ${apple ? `<a class="pill" href="${esc(apple)}">Apple Maps</a>` : ""}
+        ${google ? `<a class="pill" href="${esc(google)}">Google Maps</a>` : ""}
+      </div>` : ""}
+    </section>` : "";
+
+  const roles = p.roles?.length ? `
+    <section class="card">
+      <h2>Who's on what</h2>
+      ${p.roles.map(r => `<div class="row"><span class="label">${esc(r.role)}</span><span>${r.names.map(n => `${esc(n)}<span class="tick">✓</span>`).join("<br>")}</span></div>`).join("")}
+    </section>` : "";
+
+  const songs = p.songs?.length ? `
+    <section class="card">
+      <h2>Set list</h2>
+      <ol>${p.songs.map(s => `<li><span>${esc(s.title)}${s.artist ? `<span class="artist">${esc(s.artist)}</span>` : ""}</span></li>`).join("")}</ol>
+    </section>` : "";
+
+  const am = safeURL(p.appleMusicURL), sp = safeURL(p.spotifyURL);
+  const playlists = (am || sp) ? `
+    <section class="card">
+      <h2>Playlists</h2>
+      <div class="buttons">
+        ${am ? `<a class="pill" href="${esc(am)}"><span class="dot" style="background:#FA3D59"></span>Apple Music</a>` : ""}
+        ${sp ? `<a class="pill" href="${esc(sp)}"><span class="dot" style="background:#1DB954"></span>Spotify</a>` : ""}
+      </div>
+    </section>` : "";
+
+  const rehearsal = p.rehearsal ? `
+    <section class="card">
+      <h2>Rehearsal</h2>
+      <div>${esc(formatWhen(p.rehearsal.date, p.timeZone))}</div>
+      ${p.rehearsal.place ? `<div class="small">${esc(p.rehearsal.place)}</div>` : ""}
+    </section>` : "";
+
+  app.innerHTML = `
+    <div class="hero"></div>
+    <main>
+      <div class="titles">
+        <h1>${esc(p.name)}</h1>
+        <div class="when">${esc(formatWhen(p.date, p.timeZone))}</div>
+        ${p.place ? `<div class="where">${esc(p.place)}</div>` : ""}
+      </div>
+      <div class="actions">
+        <a class="pill primary" href="${icsLink(p)}" download="${esc(p.name)}.ics">Add to calendar</a>
+      </div>
+      ${weather}${where}${roles}${songs}${playlists}${rehearsal}
+      <footer>Made with Repertoire</footer>
+    </main>`;
+}
+
+(async () => {
+  const id = location.hash.slice(1).toLowerCase();
+  if (!/^[0-9a-f-]{36}$/.test(id)) { showStatus("This link isn't complete. Ask whoever sent it for the full link."); return; }
+  const record = await lookup(id);
+  if (!record) { showStatus("This line-up isn't available any more."); return; }
+  let payload;
+  try { payload = JSON.parse(record.fields.payload.value); } catch { showStatus("This line-up couldn't be read."); return; }
+  const asset = record.fields.background?.value?.downloadURL;
+  render(payload, asset ? asset.replace("${f}", "background.jpg") : null);
+})();
+</script>
+</body>
+</html>
