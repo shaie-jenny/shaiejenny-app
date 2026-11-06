@@ -40,6 +40,8 @@
     box-shadow: 0 1px 0 rgba(255,255,255,0.8) inset, 0 6px 22px rgba(59,47,39,0.06); }
   .num { flex: none; width: 40px; height: 40px; border-radius: 14px; display: grid; place-items: center;
     font-weight: 700; color: #fff; background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 70%, #fff), var(--accent)); }
+  .thumb { flex: none; width: 58px; height: 58px; border-radius: 16px; object-fit: cover; background: #fff;
+    box-shadow: 0 0 0 1px rgba(59,47,39,0.06); }
   .text { flex: 1 1 auto; min-width: 0; }
   .name { font-weight: 600; font-size: 16px; }
   .shop { font-size: 13px; color: var(--soft); margin-top: 1px; }
@@ -60,9 +62,18 @@
 <div id="app"><p class="status">Opening the list…</p></div>
 
 <script>
-// Gifted wishlist card. Everything is in the link's #fragment (compressed),
-// so nothing is stored anywhere and the fragment is never sent to the host.
+// Gifted wishlist card. Two kinds of link:
+//   #c=<id>   the card lives in Gifted's public iCloud database (with photos),
+//             and updates when it's edited in the app. Read-only key below.
+//   #<data>   older links: the whole card is in the link (compressed), no photos.
 // Prices are left out on purpose: tap through to the shop to see them.
+const CONTAINER = "iCloud.com.shaiejenny.gifted";
+// Read-only keys for the public database, one per iCloud environment.
+// TestFlight and App Store builds use production; test builds use development.
+const API_TOKENS = {
+  production: "e961b75c13a56f667de67ead1b1c28bdd7db038bf621d8b6be4f076196de1f09",
+  development: "0284c98ecf68bdc4111b4db92b222211d8e8d73f0100702fa667e84933f7b0fb"
+};
 const app = document.getElementById("app");
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const safeURL = u => /^https:\/\//i.test(u || "") ? u : null;
@@ -77,7 +88,24 @@ async function decode(fragment) {
   return JSON.parse(await new Response(stream).text());
 }
 
-function render(p) {
+async function lookup(id) {
+  for (const [env, token] of Object.entries(API_TOKENS)) {
+    if (!/^[0-9a-f]{64}$/.test(token)) continue;
+    try {
+      const res = await fetch(`https://api.apple-cloudkit.com/database/1/${CONTAINER}/${env}/public/records/lookup?ckAPIToken=${encodeURIComponent(token)}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ records: [{ recordName: "card-" + id }] })
+      });
+      if (!res.ok) continue;
+      const record = (await res.json()).records?.[0];
+      if (record && record.fields?.payload) return record;
+    } catch (e) { /* try the next environment */ }
+  }
+  return null;
+}
+
+function render(p, photos = []) {
   const who = p.n ? `${p.n.split(" ")[0]}'s wishlist` : "My wishlist";
   document.title = who;
   document.documentElement.style.setProperty("--accent", ACCENTS[p.o] || "#EE7B6A");
@@ -86,8 +114,9 @@ function render(p) {
 
   const items = (p.i || []).map((it, n) => {
     const url = safeURL(it.u);
+    const photo = Number.isInteger(it.p) ? safeURL(photos[it.p]) : null;
     const inner = `
-      <div class="num">${n + 1}</div>
+      ${photo ? `<img class="thumb" src="${esc(photo)}" alt="" loading="lazy">` : `<div class="num">${n + 1}</div>`}
       <div class="text"><div class="name">${esc(it.t)}</div>${it.s ? `<div class="shop">${esc(it.s)}</div>` : ""}</div>
       ${url ? `<span class="open">Open</span>` : ""}`;
     return url ? `<a class="item" href="${esc(url)}" target="_blank" rel="noopener noreferrer">${inner}</a>`
@@ -109,6 +138,17 @@ function render(p) {
 (async () => {
   const fragment = location.hash.slice(1);
   if (!fragment) { showStatus("This link isn't complete. Ask whoever sent it for the full link."); return; }
+  if (fragment.startsWith("c=")) {
+    const id = fragment.slice(2).toLowerCase();
+    if (!/^[0-9a-f-]{36}$/.test(id)) { showStatus("This link isn't complete. Ask whoever sent it for the full link."); return; }
+    const record = await lookup(id);
+    if (!record) { showStatus("This list isn't available any more."); return; }
+    let payload;
+    try { payload = JSON.parse(record.fields.payload.value); } catch { showStatus("This list couldn't be read."); return; }
+    const photos = (record.fields.thumbs?.value || []).map(a => a?.downloadURL ? a.downloadURL.replace("${f}", "photo.jpg") : null);
+    render(payload, photos);
+    return;
+  }
   try { render(await decode(fragment)); }
   catch (e) { showStatus("This list couldn't be opened. Try opening the link in Safari or Chrome."); }
 })();
